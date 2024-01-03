@@ -137,7 +137,7 @@ def csv_file_check(restore_list: dict) -> None:
     time.slepp(1)
 
 
-def file_name_check(restore_list: dict) -> None:
+def file_name_check(restore_list: dict) -> str:
     """Checks if last_modified date is being useed instead of file_name for the restore."""
     for data in restore_list:
         s3_bucket_name: str = data["s3_bucket_name"]
@@ -225,3 +225,57 @@ def file_name_check(restore_list: dict) -> None:
                     print(f"Something has gone wrong with the file name provided '{file_name}' due to an issue with AWS. Please ensure the correct information is entered and review the documentation before trying another restore.")
             else:
                 return file_name, file_key
+            
+    
+def intiate_restore(restore_list: dict) -> None:
+    """Initiates a S3 Glacier restore from the restore_list.csv file."""
+    for data in restore_list:
+        file_name: str = data["file_name"]
+        s3_key: str = f"{data["s3_backup_file_path"]}/{data["sql_server_name"]}/{data["sql_instance_name"]}/{file_name}"
+        s3_bucket_name: str = data["s3_bucket_name"]
+        retrieval_tier: str = data["retrieval_tier"]
+        email: str = data["email"]
+
+        file_name, file_key = file_name_check(restore_list)
+
+        # Initiate restore.
+        try:
+            restore_response: dict = client.restore_object(
+                Bucket=s3_bucket_name,
+                Key=s3_key,
+                RestoreResponse={
+                    "Days": 1,
+                    "GlacierJobParamters": {
+                        "Tier": retrieval_tier
+                    }
+                }
+            )
+        except:
+            print("_________________________________" "\n" "")
+            print(f"{file_name} cannot be restored because it is either currently being restored or already accessible outside of the Glaicer storage class.")
+            print("_________________________________" "\n" "")
+        else:
+            print("_________________________________" "\n" "")
+            print(f"Beginning {file_name} @ {datetime.now()}.")
+            print("_________________________________" "\n" "")
+            time.sleep(1)
+
+            status_code: int = restore_response["ResponseMetadata"]["HTTPStatusCode"]
+
+            if status_code == 200:
+                print(f"Http Status Code: {status_code} OK - {file_name} is already restored.")
+                print("_________________________________" "\n" "")
+                time.sleep(2)
+                copy_to_s3(s3_bucket_name, s3_key, file_name, email, restore_request="false")
+            elif status_code == 202:
+                print(f"Http Status Code: {status_code} Accepted - {file_name} is now being restored.")
+                print("_________________________________" "\n" "")
+                time.sleep(2)
+            else:
+                print(f"Error! {file_name} could not be restored.")
+                print("_________________________________" "\n" "")
+                time.sleep(2)
+
+
+def check_status(restore_list: dict, seconds) -> None:
+    pass
