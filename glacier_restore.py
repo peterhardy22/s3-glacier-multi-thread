@@ -39,10 +39,62 @@ import argparse
 import boto3
 import botocore
 import concurrent.futures
-import csvimport json
-import osimport requests
+import csv
+import json
+import os
+import requests
 import time
 
 from datetime import date, datetime, timedelta
 from mailer import Mailer, Message
+
+today = datetime.now()
+email_from = "s3-glacier-restore@glacierrestore.com"
+email_list = []
+
+client = boto3.client("s3")
+s3 = boto3.resource("s3")
+
+
+def csv_file_check(restore_list: list) -> None:
+    """Checks the restore_list.csv file to make sure all required data is present and correct."""
+
+    for data in restore_list:
+        s3_bucket_name: str = data["s3_bucket_name"]
+        s3_backup_file_path: str = data["s3_backup_file_path"]
+        sql_server_name: str = data["sql_server_name"]
+        sql_instance_name: str = data["sql_instance_name"]
+        sql_database_name: str = data["sql_database_name"]
+        file_name: str = data["file_name"]
+        retrieval_tier: str = data["retrieval_tier"]
+        last_modified: str = data["last_modified"]
+        email: str = data["email"]
+        email_list.append(email)
+
+        # Validate partial key provided to make sure it exists in the bucket.
+        bucket_object = client.list_objects_v2(Bucket=s3_bucket_name, Prefix=f"{s3_backup_file_path}/{sql_server_name}/{sql_instance_name}/{sql_database_name}")
+        bucket_contents: dict = bucket_object["Contents"]
+
+        # Check all necessary inputs exist in the CSV file.
+        if "" in (s3_bucket_name, s3_backup_file_path, sql_server_name,
+                  sql_instance_name, sql_database_name, retrieval_tier):
+            # Inputs are incorrect.
+            message = Message(From=email_from, To=email_list, charset="utf-8")
+            message.Subject = "AWS S3 Glacier Restore Alert"
+            message.Html = """<html>
+            <a href="https://www.documentation.aws-s3-glacier-restore.com">S3 Glacier Restore Documentation</a>
+            <h3>AWS S3 Glacier Restore<span style="color:red;">Alert</span> @ {today}</h3>
+            <br/>
+            <h4>You are missing one of the required input fields to restore {file_name}.<br/></h4>
+            <h4>Please review the documentation for entering data in the restore_list.csv file before trying again.<br/></h4>
+            </html>
+            """.format(today=today, file=file_name)
+            sender = Mailer("process-automation.loc")
+            sender.send(message)
+            print("_________________________________" "\n" "")
+            sys.exit("A required input parameter needed to create a restore is missing. Check the restore_list.csv file before trying again.")
+
+        # Check if sql_database_name given is found as a prefix of any object in the given S3 bucket.
+
+
 
