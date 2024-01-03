@@ -32,3 +32,17 @@ Notes:
     Version 1.0 Developer:  Peter Hardy
     Version 1.0 Date:       08/01/2021
 """
+
+
+import sys
+import argparse
+import boto3
+import botocore
+import concurrent.futures
+import csvimport json
+import osimport requests
+import time
+
+from datetime import date, datetime, timedelta
+from mailer import Mailer, Message
+
