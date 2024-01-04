@@ -267,7 +267,7 @@ def intiate_restore(restore_list: dict) -> None:
                 print(f"Http Status Code: {status_code} OK - {file_name} is already restored.")
                 print("_________________________________" "\n" "")
                 time.sleep(2)
-                copy_to_s3(s3_bucket_name, s3_key, file_name, email, restore_request="false")
+                copy_to_s3(s3_bucket_name, s3_key, file_name)
             elif status_code == 202:
                 print(f"Http Status Code: {status_code} Accepted - {file_name} is now being restored.")
                 print("_________________________________" "\n" "")
@@ -346,5 +346,43 @@ def check_status(restore_list: dict, seconds) -> None:
                 done: bool = True
 
 
-def copy_to_s3(s3_bucket_name, s3_key, file_name, email, restore_request) -> None:
-    pass
+def copy_to_s3(s3_bucket_name, s3_key, file_name) -> None:
+    copy_head_response: dict = client.head_object(
+        Bucket=s3_bucket_name,
+        Key=s3_key
+    )
+    print(f"Initiating copy of {file_name} now.")
+    print("_________________________________" "\n" "")
+    time.sleep(1)
+
+    length: int = copy_head_response["ContentLength"]
+    file_size: float = float(length / 1024 / 1024 / 1024)
+
+    if file_size >= float(4.99):
+        copy_source = {
+            "Bucket": s3_bucket_name,
+            "Key": s3_key
+        }
+        s3.meta.cleint.copy(copy_source, s3_bucket_name, s3_key)
+
+        client.head_object(
+            Bucket=s3_bucket_name,
+            Key=s3_key
+        )
+        print(f"{file_name} has finished copying.")
+        print("_________________________________" "\n" "")
+    else:
+        source: str = f"{s3_bucket_name}/{s3_key}"
+        metadata: dict = {}
+        metadata["object_restored"] = f"{today}"
+
+        client.copy_object(
+            Bucket=s3_bucket_name,
+            CopySource=source,
+            Key=s3_key,
+            Metadata=metadata,
+            MetadataDirective="REPLACE"
+        )
+        print(f"{file_name} has finished copying.")
+        print("_________________________________" "\n" "")
+
