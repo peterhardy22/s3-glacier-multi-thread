@@ -235,6 +235,7 @@ def intiate_restore(restore_list: dict) -> None:
         s3_bucket_name: str = data["s3_bucket_name"]
         retrieval_tier: str = data["retrieval_tier"]
         email: str = data["email"]
+        email_list.append(email)
 
         file_name, file_key = file_name_check(restore_list)
 
@@ -278,4 +279,72 @@ def intiate_restore(restore_list: dict) -> None:
 
 
 def check_status(restore_list: dict, seconds) -> None:
+    """Checks status of individual S3 Glacier object restores from time elapsed to completion."""
+    for data in restore_list:
+        file_name: str = data["file_name"]
+        s3_key: str = f"{data["s3_backup_file_path"]}/{data["sql_server_name"]}/{data["sql_instance_name"]}/{file_name}"
+        s3_bucket_name: str = data["s3_bucket_name"]
+        email: str = data["email"]
+        email_list.append(email)
+
+        restore_status_response: dict = client.head_object(
+            Bucket=s3_bucket_name,
+            Key=s3_key
+        )
+        print("_________________________________" "\n" "")
+
+        ongoing_request: dict = restore_status_response["ResponseMetaData"]["HTTPHeaders"]
+        restore_request: str = ongoing_request.get("x-amz-restore")
+
+        done: bool = False
+
+        while not done:
+            if not restore_request:
+                print(f"{file_name} has not initiated a restore because it is currently in another storage class.")
+                print("_________________________________" "\n" "")
+                message = Message(From=email_from, To=email_list, charset="utf-8")
+                message.Subject = "AWS S3 Glacier Restore Alert"
+                message.Html = """<html>
+                <a href="https://www.documentation.aws-s3-glacier-restore.com">S3 Glacier Restore Documentation</a>
+                <h3>AWS S3 Glacier Restore<span style="color:green;">Alert</span> @ {today}</h3>
+                <br/>
+                <h4>{file_name}" has been restored from Glacier and is now ready for access.<br/></h4>
+                </html>
+                """.format(today=today, file_name=file_name)
+                sender = Mailer("process-automation.loc")
+                sender.send(message)
+                done: bool = True
+            elif "true" in restore_request:
+                print(f"{file_name} is currently being resotred for the past {datetime.now() - today} HH:MM:SS.")
+                print("_________________________________" "\n" "")
+                time.sleep(seconds)
+                restore_status_response: dict = client.head_object(
+                        Bucket=s3_bucket_name,
+                        Key=s3_key
+                )
+                print("_________________________________" "\n" "")
+                ongoing_request: dict = restore_status_response["ResponseMetaData"]["HTTPHeaders"]
+                restore_request: str = ongoing_request.get("x-amz-restore") 
+            else:
+                copy_to_s3(s3_bucket_name, s3_key, file_name, email, restore_request)
+                print("*********************************" "\n" "")
+                print(f"{file_name} has finished restoring and is ready for access as of {datetime.now()}.")
+                print(f"The restoration processs for {file_name} took {datetime.now() - today} HH:MM:SS to complete.")
+                print("*********************************" "\n" "")
+                print(f"Exiting thread for restoring {file_name}.")
+                message = Message(From=email_from, To=email_list, charset="utf-8")
+                message.Subject = "AWS S3 Glacier Restore Alert"
+                message.Html = """<html>
+                <a href="https://www.documentation.aws-s3-glacier-restore.com">S3 Glacier Restore Documentation</a>
+                <h3>AWS S3 Glacier Restore<span style="color:green;">Alert</span> @ {today}</h3>
+                <br/>
+                <h4>{file_name}" has been restored from Glacier and is now ready for access.<br/></h4>
+                </html>
+                """.format(today=today, file_name=file_name)
+                sender = Mailer("process-automation.loc")
+                sender.send(message)
+                done: bool = True
+
+
+def copy_to_s3(s3_bucket_name, s3_key, file_name, email, restore_request) -> None:
     pass
