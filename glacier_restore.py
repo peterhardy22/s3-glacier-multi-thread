@@ -35,23 +35,19 @@ Notes:
 
 
 import sys
-import argparse
 import boto3
 import botocore
 import concurrent.futures
 import csv
-import json
-import os
-import requests
 import time
 
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from mailer import Mailer, Message
+
 
 today = datetime.now()
 email_from = "s3-glacier-restore@glacierrestore.com"
 email_list = []
-
 client = boto3.client("s3")
 s3 = boto3.resource("s3")
 
@@ -190,7 +186,7 @@ def file_name_check(restore_list: dict) -> str:
             print(f"ERROR: No objects in this part of the S3 bucket match the date provided: {last_modified}. Please ensure the correct information is entered and review the documentation before trying another restore.")
         else:
             try:
-                s3.Object{s3_bucket_name, s3_key}.load()
+                s3.Object(s3_bucket_name, s3_key).load()
                 print(f"File '{file_name}' exists in the S3 bucket.")
             except botocore.exceptions.ClientError as e:
                 if e.response["Error"]["Code"] == "404":
@@ -227,7 +223,7 @@ def file_name_check(restore_list: dict) -> str:
                 return file_name, file_key
             
     
-def intiate_restore(restore_list: dict) -> None:
+def initiate_restore(restore_list: dict) -> None:
     """Initiates a S3 Glacier restore from the restore_list.csv file."""
     for data in restore_list:
         file_name: str = data["file_name"]
@@ -267,7 +263,7 @@ def intiate_restore(restore_list: dict) -> None:
                 print(f"Http Status Code: {status_code} OK - {file_name} is already restored.")
                 print("_________________________________" "\n" "")
                 time.sleep(2)
-                copy_to_s3(s3_bucket_name, s3_key, file_name, email, restore_request="false")
+                copy_to_s3(s3_bucket_name, s3_key, file_name)
             elif status_code == 202:
                 print(f"Http Status Code: {status_code} Accepted - {file_name} is now being restored.")
                 print("_________________________________" "\n" "")
@@ -346,5 +342,117 @@ def check_status(restore_list: dict, seconds) -> None:
                 done: bool = True
 
 
-def copy_to_s3(s3_bucket_name, s3_key, file_name, email, restore_request) -> None:
-    pass
+def copy_to_s3(s3_bucket_name, s3_key, file_name) -> None:
+    copy_head_response: dict = client.head_object(
+        Bucket=s3_bucket_name,
+        Key=s3_key
+    )
+    print(f"Initiating copy of {file_name} now.")
+    print("_________________________________" "\n" "")
+    time.sleep(1)
+
+    length: int = copy_head_response["ContentLength"]
+    file_size: float = float(length / 1024 / 1024 / 1024)
+
+    if file_size >= float(4.99):
+        copy_source = {
+            "Bucket": s3_bucket_name,
+            "Key": s3_key
+        }
+        s3.meta.cleint.copy(copy_source, s3_bucket_name, s3_key)
+
+        client.head_object(
+            Bucket=s3_bucket_name,
+            Key=s3_key
+        )
+        print(f"{file_name} has finished copying.")
+        print("_________________________________" "\n" "")
+    else:
+        source: str = f"{s3_bucket_name}/{s3_key}"
+        metadata: dict = {}
+        metadata["object_restored"] = f"{today}"
+
+        client.copy_object(
+            Bucket=s3_bucket_name,
+            CopySource=source,
+            Key=s3_key,
+            Metadata=metadata,
+            MetadataDirective="REPLACE"
+        )
+        print(f"{file_name} has finished copying.")
+        print("_________________________________" "\n" "")
+
+
+def monitor_restores(restore_list: dict) -> str:
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        threadlist: list = []
+        for data in restore_list:
+            file_name: str = data["file_name"]
+            s3_bucket_name: str = data["s3_bucket_name"]
+            s3_key: str = f"{data["s3_backup_file_path"]}/{data["sql_server_name"]}/{data["sql_instance_name"]}/{file_name}"
+            retrieval_tier: str = data["retrieval_tier"].title()
+            email: str = data["email"]
+            email_list.append(email)
+
+            file_name, s3_key = file_name_check(restore_list)
+
+            response: dict = client.head_object(
+                Bucket=s3_bucket_name,
+                Key=s3_key
+            )
+
+            ongoing_request: dict = response["ResponseMetaData"]["HTTPHeaders"]
+            restore_request: str = ongoing_request.get("x-amz-restore")
+
+            if not restore_request:
+                print("*********************************" "\n" "")
+                print(f"{file_name} has finisihed copying from a restored state and is ready for access as of {datetime.now()}.")
+                print("*********************************" "\n" "")
+                message = Message(From=email_from, To=email_list, charset="utf-8")
+                message.Subject = "AWS S3 Glacier Restore Alert"
+                message.Html = """<html>
+                <a href="https://www.documentation.aws-s3-glacier-restore.com">S3 Glacier Restore Documentation</a>
+                <h3>AWS S3 Glacier Restore<span style="color:green;">Alert</span> @ {today}</h3>
+                <br/>
+                <h4>{file_name}" has been restored from S3 Glacier and is now ready for access.<br/></h4>
+                </html>
+                """.format(today=today, file_name=file_name)
+                sender = Mailer("process-automation.loc")
+                sender.send(message)
+            else:
+                print(f"Creating thread for {file_name} being restored at the {retrieval_tier} Retrieval Tier.")
+                print("_________________________________" "\n" "")
+
+                if retrieval_tier == "Standard":
+                    seconds: int = 900
+                    time_duration: str = "15 minutes"
+                if retrieval_tier == "Bulk":
+                    seconds: int = 3600
+                    time_duration: str = "hour"
+                if retrieval_tier == "Expedited":
+                    seconds: int = 60
+                    time_duration: str = "minute"
+
+                threadlist.append(executor.submit(check_status, data, seconds))
+                time.sleep(1)
+
+                if seconds == 60 or seconds == 3600:
+                    print(f"Thread successfully created for {file_name}, status will be checked once every {time_duration} during the restore.")
+                    print("_________________________________" "\n" "")
+                if seconds == 900:
+                    print(f"Thread successfully created for {file_name}, status will be checked every {time_duration} during the restore.")
+                    print("_________________________________" "\n" "")
+                time.sleep(1)
+        for thread in concurrent.futures.as_completed(threadlist):
+            return thread.result()
+
+if __name__ == "__main__":
+
+    with open("restore_list.csv") as file:
+        restore_list: list = [{key: value for key, value in row.items()}
+                              for row in csv.DictReader(file, skipinitialspace=True)]
+    
+    print(f"Beginning restore_list.csv process @ {today}.")
+    csv_file_check(restore_list)
+    initiate_restore(restore_list)
+    monitor_restores(restore_list)
