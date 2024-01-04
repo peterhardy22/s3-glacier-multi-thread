@@ -51,7 +51,6 @@ from mailer import Mailer, Message
 today = datetime.now()
 email_from = "s3-glacier-restore@glacierrestore.com"
 email_list = []
-
 client = boto3.client("s3")
 s3 = boto3.resource("s3")
 
@@ -386,3 +385,66 @@ def copy_to_s3(s3_bucket_name, s3_key, file_name) -> None:
         print(f"{file_name} has finished copying.")
         print("_________________________________" "\n" "")
 
+
+def monitor_restores(restore_list: dict) -> str:
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        threadlist: list = []
+        for data in restore_list:
+            file_name: str = data["file_name"]
+            s3_bucket_name: str = data["s3_bucket_name"]
+            s3_key: str = f"{data["s3_backup_file_path"]}/{data["sql_server_name"]}/{data["sql_instance_name"]}/{file_name}"
+            retrieval_tier: str = data["retrieval_tier"].title()
+            email: str = data["email"]
+            email_list.append(email)
+
+            file_name, s3_key = file_name_check(restore_list)
+
+            response: dict = client.head_object(
+                Bucket=s3_bucket_name,
+                Key=s3_key
+            )
+
+            ongoing_request: dict = response["ResponseMetaData"]["HTTPHeaders"]
+            restore_request: str = ongoing_request.get("x-amz-restore")
+
+            if not restore_request:
+                print("*********************************" "\n" "")
+                print(f"{file_name} has finisihed copying from a restored state and is ready for access as of {datetime.now()}.")
+                print("*********************************" "\n" "")
+                message = Message(From=email_from, To=email_list, charset="utf-8")
+                message.Subject = "AWS S3 Glacier Restore Alert"
+                message.Html = """<html>
+                <a href="https://www.documentation.aws-s3-glacier-restore.com">S3 Glacier Restore Documentation</a>
+                <h3>AWS S3 Glacier Restore<span style="color:green;">Alert</span> @ {today}</h3>
+                <br/>
+                <h4>{file_name}" has been restored from S3 Glacier and is now ready for access.<br/></h4>
+                </html>
+                """.format(today=today, file_name=file_name)
+                sender = Mailer("process-automation.loc")
+                sender.send(message)
+            else:
+                print(f"Creating thread for {file_name} being restored at the {retrieval_tier} Retrieval Tier.")
+                print("_________________________________" "\n" "")
+
+                if retrieval_tier == "Standard":
+                    seconds: int = 900
+                    time_duration: str = "15 minutes"
+                if retrieval_tier == "Bulk":
+                    seconds: int = 3600
+                    time_duration: str = "hour"
+                if retrieval_tier == "Expedited":
+                    seconds: int = 60
+                    time_duration: str = "minute"
+
+                threadlist.append(executor.submit(check_status, data, seconds))
+                time.sleep(1)
+
+                if seconds == 60 or seconds == 3600:
+                    print(f"Thread successfully created for {file_name}, status will be checked once every (time_duration) during the restore.")
+                    print("_________________________________" "\n" "")
+                if seconds == 900:
+                    print(f"Thread successfully created for {file_name}, status will be checked every (time_duration) during the restore.")
+                    print("_________________________________" "\n" "")
+                time.sleep(1)
+        for thread in concurrent.futures.as_completed(threadlist):
+            return thread.result()
