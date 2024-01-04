@@ -35,18 +35,15 @@ Notes:
 
 
 import sys
-import argparse
 import boto3
 import botocore
 import concurrent.futures
 import csv
-import json
-import os
-import requests
 import time
 
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from mailer import Mailer, Message
+
 
 today = datetime.now()
 email_from = "s3-glacier-restore@glacierrestore.com"
@@ -189,7 +186,7 @@ def file_name_check(restore_list: dict) -> str:
             print(f"ERROR: No objects in this part of the S3 bucket match the date provided: {last_modified}. Please ensure the correct information is entered and review the documentation before trying another restore.")
         else:
             try:
-                s3.Object{s3_bucket_name, s3_key}.load()
+                s3.Object(s3_bucket_name, s3_key).load()
                 print(f"File '{file_name}' exists in the S3 bucket.")
             except botocore.exceptions.ClientError as e:
                 if e.response["Error"]["Code"] == "404":
@@ -226,7 +223,7 @@ def file_name_check(restore_list: dict) -> str:
                 return file_name, file_key
             
     
-def intiate_restore(restore_list: dict) -> None:
+def initiate_restore(restore_list: dict) -> None:
     """Initiates a S3 Glacier restore from the restore_list.csv file."""
     for data in restore_list:
         file_name: str = data["file_name"]
@@ -440,11 +437,22 @@ def monitor_restores(restore_list: dict) -> str:
                 time.sleep(1)
 
                 if seconds == 60 or seconds == 3600:
-                    print(f"Thread successfully created for {file_name}, status will be checked once every (time_duration) during the restore.")
+                    print(f"Thread successfully created for {file_name}, status will be checked once every {time_duration} during the restore.")
                     print("_________________________________" "\n" "")
                 if seconds == 900:
-                    print(f"Thread successfully created for {file_name}, status will be checked every (time_duration) during the restore.")
+                    print(f"Thread successfully created for {file_name}, status will be checked every {time_duration} during the restore.")
                     print("_________________________________" "\n" "")
                 time.sleep(1)
         for thread in concurrent.futures.as_completed(threadlist):
             return thread.result()
+
+if __name__ == "__main__":
+
+    with open("restore_list.csv") as file:
+        restore_list: list = [{key: value for key, value in row.items()}
+                              for row in csv.DictReader(file, skipinitialspace=True)]
+    
+    print(f"Beginning restore_list.csv process @ {today}.")
+    csv_file_check(restore_list)
+    initiate_restore(restore_list)
+    monitor_restores(restore_list)
